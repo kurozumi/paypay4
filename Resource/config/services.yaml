@@ -1,0 +1,4 @@
+parameters:
+  paypay_api_key: '%env(PAYPAY_API_KEY)%'
+  paypay_api_secret: '%env(PAYPAY_API_SECRET)%'
+  paypay_merchant_id: '%env(PAYPAY_MERCHANT_ID)%'

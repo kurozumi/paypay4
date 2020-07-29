@@ -1,0 +1,13 @@
+{
+  "name": "ec-cube/Paypay4",
+  "version": "1.0.0",
+  "description": "PayPay for EC-CUBE4",
+  "type": "eccube-plugin",
+  "require": {
+    "ec-cube/plugin-installer": "~0.0.7",
+    "paypayopa/php-sdk": "*"
+  },
+  "extra": {
+    "code": "paypay4"
+  }
+}
