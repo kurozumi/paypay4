@@ -24,6 +24,8 @@ PAYPAY_API_KEY=********************
 PAYPAY_API_SECRET=********************
 ## マーチャントID
 PAYPAY_MERCHANT_ID=********************
+## 1はテスト環境、0は本番環境
+PAYPAY_TEST=1
 ```
 
 ## 配送方法設定でPayPayを設定

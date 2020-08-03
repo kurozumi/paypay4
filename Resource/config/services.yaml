@@ -1,4 +1,7 @@
-parameters:
-  paypay_api_key: '%env(PAYPAY_API_KEY)%'
-  paypay_api_secret: '%env(PAYPAY_API_SECRET)%'
-  paypay_merchant_id: '%env(PAYPAY_MERCHANT_ID)%'
+services:
+  PayPay\OpenPaymentAPI\Client:
+    arguments:
+      - API_KEY: '%env(PAYPAY_API_KEY)%'
+        API_SECRET: '%env(PAYPAY_API_SECRET)%'
+        MERCHANT_ID: '%env(PAYPAY_MERCHANT_ID)%'
+      - '%env(PAYPAY_TEST)%'
