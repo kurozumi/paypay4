@@ -120,7 +120,7 @@ class PaymentController extends AbstractShoppingController
         $payload->setRedirectUrl($this->generateUrl('paypay_complete', [], UrlGeneratorInterface::ABSOLUTE_URL));
 
         // 仮売上にする
-        $payload->setIsAuthorization(true);
+//        $payload->setIsAuthorization(true);
 
         $response = $this->client->code->createQRCode($payload);
 
@@ -130,7 +130,7 @@ class PaymentController extends AbstractShoppingController
 
             // 支払いステータスをQRコード生成にする
             $PaymentStatus = $this->paymentStatusRepository->find(PaymentStatus::CREATED);
-            $Order->setPaymentStatus($PaymentStatus);
+            $Order->setPaypayPaymentStatus($PaymentStatus);
 
             $this->entityManager->persist($Order);
 
