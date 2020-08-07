@@ -4,4 +4,4 @@ services:
       - API_KEY: '%env(PAYPAY_API_KEY)%'
         API_SECRET: '%env(PAYPAY_API_SECRET)%'
         MERCHANT_ID: '%env(PAYPAY_MERCHANT_ID)%'
-      - '%env(PAYPAY_TEST)%'
+      - '%env(PAYPAY_PROD)%'
