@@ -13,13 +13,16 @@
 namespace Plugin\paypay4\Controller;
 
 
-use Eccube\Common\EccubeConfig;
 use Eccube\Controller\AbstractShoppingController;
 use Eccube\Entity\BaseInfo;
 use Eccube\Entity\Master\OrderStatus;
 use Eccube\Entity\Order;
 use Eccube\Repository\BaseInfoRepository;
 use Eccube\Repository\Master\OrderStatusRepository;
+use Eccube\Repository\OrderRepository;
+use Eccube\Service\CartService;
+use Eccube\Service\MailService;
+use Eccube\Service\OrderHelper;
 use Eccube\Service\PurchaseFlow\PurchaseContext;
 use PayPay\OpenPaymentAPI\Client;
 use PayPay\OpenPaymentAPI\Models\CreateQrCodePayload;
@@ -29,6 +32,7 @@ use Plugin\paypay4\Repository\PaymentStatusRepository;
 use Symfony\Component\HttpFoundation\ParameterBag;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 use Symfony\Component\Routing\Annotation\Route;
 use Symfony\Component\Routing\Generator\UrlGeneratorInterface;
 
@@ -36,10 +40,15 @@ use Symfony\Component\Routing\Generator\UrlGeneratorInterface;
  * Class PaymentController
  * @package Plugin\paypay4\Controller
  *
- * @Route("/shopping")
+ * @Route("/shopping/paypay")
  */
 class PaymentController extends AbstractShoppingController
 {
+    /**
+     * @var BaseInfo
+     */
+    private $baseInfo;
+
     /**
      * @var Client
      */
@@ -61,24 +70,40 @@ class PaymentController extends AbstractShoppingController
     private $paymentStatusRepository;
 
     /**
-     * @var BaseInfo
+     * @var OrderRepository
      */
-    private $baseInfo;
+    private $orderRepository;
+
+    /**
+     * @var CartService
+     */
+    private $cartService;
+
+    /**
+     * @var MailService
+     */
+    private $mailService;
 
     public function __construct(
+        BaseInfoRepository $baseInfoRepository,
+        Client $client,
         ParameterBag $parameterBag,
         OrderStatusRepository $orderStatusRepository,
         PaymentStatusRepository $paymentStatusRepository,
-        BaseInfoRepository $baseInfoRepository,
-        Client $client
+        OrderRepository $orderRepository,
+        CartService $cartService,
+        MailService $mailService
     )
     {
+        $this->baseInfo = $baseInfoRepository->get();
 
+        $this->client = $client;
         $this->parameterBag = $parameterBag;
         $this->orderStatusRepository = $orderStatusRepository;
         $this->paymentStatusRepository = $paymentStatusRepository;
-        $this->baseInfo = $baseInfoRepository->get();
-        $this->client = $client;
+        $this->orderRepository = $orderRepository;
+        $this->cartService = $cartService;
+        $this->mailService = $mailService;
     }
 
     /**
@@ -86,7 +111,7 @@ class PaymentController extends AbstractShoppingController
      * @return \Symfony\Component\HttpFoundation\RedirectResponse|Response
      * @throws \Exception
      *
-     * @Route("/paypay/payment", name="paypay_payment")
+     * @Route("/payment", name="paypay_payment")
      */
     public function payment(Request $request)
     {
@@ -103,10 +128,10 @@ class PaymentController extends AbstractShoppingController
             ->setRequestedAt()
             ->setCodeType()
             ->setRedirectType('WEB_LINK')
-            ->setRedirectUrl($this->generateUrl('paypay_complete', [], UrlGeneratorInterface::ABSOLUTE_URL))
+            ->setRedirectUrl($this->generateUrl('paypay_checkout', ["order_no" => $Order->getOrderNo()], UrlGeneratorInterface::ABSOLUTE_URL))
             ->setOrderDescription($this->baseInfo->getShopName());
 
-//            仮売上にする
+//            仮売上(残高ブロック)にする
 //            $payload->setIsAuthorization(true);
 
         $orderItems = [];
@@ -156,24 +181,86 @@ class PaymentController extends AbstractShoppingController
      * @param Request $request
      * @return Response
      *
-     * @Route("paypay/complete", name="paypay_complete")
+     * @Route("/checkout/{order_no}", name="paypay_checkout", methods={"GET"})
      */
-    public function complete(Request $request)
+    public function checkout(Request $request, $order_no)
     {
-        // ここでPayPayから取得できるデータがわからない。。
+        /** @var Order $Order */
+        $Order = $this->orderRepository->findOneBy([
+            'order_no' => $order_no,
+            'Customer' => $this->getUser()
+        ]);
 
-        // 仮売上にして注文完了画面へ。
+        if (!$Order) {
+            throw new NotFoundHttpException();
+        }
+
+        $response = $this->client->payment->getPaymentDetails($Order->getOrderNo());
+
+        if ($response['resultInfo']["code"] !== "SUCCESS") {
+            log_error("[PayPay][注文処理]決済エラー");
+            $this->addError("決済エラー");
+
+            return $this->rollbackOrder($Order, PaymentStatus::FAILED);
+        }
+
+        switch ($response["data"]["status"]) {
+            case "COMPLETED":
+                // 受注ステータスを新規受付へ変更
+                $orderStatus = $this->orderStatusRepository->find(OrderStatus::NEW);
+                $Order->setOrderStatus($orderStatus);
+
+                // 支払いステータスを実売上へ変更
+                $paymentStatus = $this->paymentStatusRepository->find(PaymentStatus::COMPLETED);
+                $Order->setPaypayPaymentStatus($paymentStatus);
+
+                // PayPayの受注IDを登録
+                $Order->setPaypayOrderId($response["data"]["paymentId"]);
+
+                // purchaseFlow::commitを呼び出し、購入処理をさせる
+                $this->purchaseFlow->commit($Order, new PurchaseContext());
+
+                log_info('[PayPay][注文処理] カートをクリアします.', [$Order->getId()]);
+                $this->cartService->clear();
+
+                // 受注IDをセッションにセット
+                $this->session->set(OrderHelper::SESSION_ORDER_ID, $Order->getId());
+
+                // メール送信
+                log_info('[PayPay][注文処理] 注文メールの送信を行います.', [$Order->getId()]);
+                $this->mailService->sendOrderMail($Order);
+                $this->entityManager->flush();
+
+                log_info('[PayPay][注文処理] 注文処理が完了しました. 購入完了画面へ遷移します.', [$Order->getId()]);
+                break;
+            case "EXPIRED":
+                return $this->rollbackOrder($Order, PaymentStatus::EXPIRED);
+                break;
+            default:
+                return $this->rollbackOrder($Order, PaymentStatus::FAILED);
+        }
+
         return $this->redirectToRoute("shopping_complete");
     }
 
-    private function rollbackOrder(Order $Order)
+    /**
+     * @param Order $Order
+     * @return \Symfony\Component\HttpFoundation\RedirectResponse
+     */
+    private function rollbackOrder(Order $Order, $paymentStatusId)
     {
         // 受注ステータスを購入処理中へ変更
         $OrderStatus = $this->orderStatusRepository->find(OrderStatus::PROCESSING);
         $Order->setOrderStatus($OrderStatus);
 
+        // 支払いステータスを変更
+        $paymentStatus = $this->paymentStatusRepository->find($paymentStatusId);
+        $Order->setPaypayPaymentStatus($paymentStatus);
+
         $this->purchaseFlow->rollback($Order, new PurchaseContext());
 
         $this->entityManager->flush();
+
+        return $this->redirectToRoute("shopping_error");
     }
 }

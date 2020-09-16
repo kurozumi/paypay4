@@ -32,6 +32,13 @@ trait OrderTrait
     private $paypay_code_id;
 
     /**
+     * @var string
+     *
+     * @ORM\Column(type="string", nullable=true, length=64)
+     */
+    private $paypay_order_id;
+
+    /**
      * @var PaymentStatus
      *
      * @ORM\ManyToOne(targetEntity="Plugin\paypay4\Entity\PaymentStatus")
@@ -54,6 +61,25 @@ trait OrderTrait
     public function setPaypayCodeId(string $codeId): self
     {
         $this->paypay_code_id = $codeId;
+
+        return $this;
+    }
+
+    /**
+     * @return string
+     */
+    public function getPaypayOrderId(): string
+    {
+        return $this->paypay_order_id;
+    }
+
+    /**
+     * @param string $orderId
+     * @return $this
+     */
+    public function setPaypayOrderId(string $orderId): self
+    {
+        $this->paypay_order_id = $orderId;
 
         return $this;
     }
