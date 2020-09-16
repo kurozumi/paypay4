@@ -65,7 +65,7 @@ jobs:
       - name: Install PayPay SDK
         run: |
           cd ec-cube
-          bin/console eccube:composer:require paypayopa/php-sdk
+          composer require paypayopa/php-sdk
         env:
           DATABASE_URL: mysql://root:root@127.0.0.1:${{ job.services.mysql.ports['3306'] }}/eccube_db
           DATABASE_SERVER_VERSION: ${{ matrix.mysql-versions }}
@@ -162,7 +162,7 @@ jobs:
       - name: Install PayPay SDK
         run: |
           cd ec-cube
-          bin/console eccube:composer:require paypayopa/php-sdk
+          composer require paypayopa/php-sdk
         env:
           DATABASE_URL: postgres://postgres:password@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/eccube_db
           DATABASE_SERVER_VERSION: ${{ matrix.postgres-versions }}
