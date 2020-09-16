@@ -170,7 +170,7 @@ class PaymentController extends AbstractShoppingController
             log_error($error_message);
             $this->addError($error_message);
 
-            $this->rollbackOrder($Order);
+            $this->rollbackOrder($Order, PaymentStatus::FAILED);
 
             return $this->redirectToRoute("shopping_error");
         }
