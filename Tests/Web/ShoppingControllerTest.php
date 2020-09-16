@@ -111,8 +111,6 @@ class ShoppingControllerTest extends AbstractShoppingControllerTestCase
             ]
         );
 
-        var_dump($this->client->getResponse()->getContent());
-
         self::assertTrue($this->client->getResponse()->isRedirection());
         self::assertContains("paypay.ne.jp", $this->client->getResponse()->getContent());
     }
