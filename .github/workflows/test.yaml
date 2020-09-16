@@ -66,6 +66,9 @@ jobs:
         run: |
           cd ec-cube
           bin/console eccube:composer:require paypayopa/php-sdk
+        env:
+          DATABASE_URL: mysql://root:root@127.0.0.1:${{ job.services.mysql.ports['3306'] }}/eccube_db
+          DATABASE_SERVER_VERSION: ${{ matrix.mysql-versions }}
 
       - name: Run Tests
         run: |
@@ -132,10 +135,12 @@ jobs:
         run: |
           tar cvzf $HOME/${{ github.event.repository.name }}.tar.gz ./*
           git clone https://${GITHUB_ACTOR}:${GITHUB_TOKEN}@github.com/EC-CUBE/ec-cube.git -b ${{ matrix.eccube-versions }} --depth=1
+
       - name: Install Composer
         run : |
           cd ec-cube
           composer install --no-progress --no-suggest --prefer-dist --optimize-autoloader
+
       - name: Setup EC-CUBE
         run: |
           cd ec-cube
@@ -150,6 +155,14 @@ jobs:
           cd ec-cube
           bin/console eccube:plugin:install --path=$HOME/${{ github.event.repository.name }}.tar.gz
           bin/console eccube:plugin:enable --code=${{ github.event.repository.name }}
+        env:
+          DATABASE_URL: postgres://postgres:password@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/eccube_db
+          DATABASE_SERVER_VERSION: ${{ matrix.postgres-versions }}
+
+      - name: Install PayPay SDK
+        run: |
+          cd ec-cube
+          bin/console eccube:composer:require paypayopa/php-sdk
         env:
           DATABASE_URL: postgres://postgres:password@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/eccube_db
           DATABASE_SERVER_VERSION: ${{ matrix.postgres-versions }}
