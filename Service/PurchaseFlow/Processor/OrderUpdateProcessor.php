@@ -20,6 +20,7 @@ use Eccube\Entity\Order;
 use Eccube\Repository\Master\OrderStatusRepository;
 use Eccube\Service\PurchaseFlow\Processor\AbstractPurchaseProcessor;
 use Eccube\Service\PurchaseFlow\PurchaseContext;
+use PayPay\OpenPaymentAPI\Client;
 use Plugin\paypay4\Entity\PaymentStatus;
 use Plugin\paypay4\Repository\PaymentStatusRepository;
 
@@ -41,13 +42,20 @@ class OrderUpdateProcessor extends AbstractPurchaseProcessor
      */
     private $orderStatusRepository;
 
+    /**
+     * @var Client
+     */
+    private $client;
+
     public function __construct(
         PaymentStatusRepository $paymentStatusRepository,
-        OrderStatusRepository $orderStatusRepository
+        OrderStatusRepository $orderStatusRepository,
+        Client $client
     )
     {
         $this->paymentStatusRepository = $paymentStatusRepository;
         $this->orderStatusRepository = $orderStatusRepository;
+        $this->client = $client;
     }
 
     public function commit(ItemHolderInterface $target, PurchaseContext $context)
@@ -55,6 +63,14 @@ class OrderUpdateProcessor extends AbstractPurchaseProcessor
         if (!$target instanceof Order) {
             return;
         }
+
+        $response = $this->client->payment->getPaymentDetails($target->getOrderNo());
+
+        // PayPayの受注IDを登録
+        $target->setPaypayOrderId($response["data"]["paymentId"]);
+        // PayPayの入金日時を登録
+        $target->setPaymentDate(new \DateTime("@".$response["data"]["acceptedAt"]));
+
         // 支払いステータスを実売上に変更
         $PaymentStatus = $this->paymentStatusRepository->find(PaymentStatus::COMPLETED);
         $target->setPaypayPaymentStatus($PaymentStatus);
@@ -65,6 +81,23 @@ class OrderUpdateProcessor extends AbstractPurchaseProcessor
         if(!$itemHolder instanceof Order) {
             return;
         }
+
+        $response = $this->client->payment->getPaymentDetails($itemHolder->getOrderNo());
+
+        if ($response['resultInfo']["code"] === "SUCCESS") {
+            switch ($response["data"]["status"]) {
+                case "EXPIRED":
+                    $paymentStatus = $this->paymentStatusRepository->find(PaymentStatus::EXPIRED);
+                    break;
+                default:
+                    $paymentStatus = $this->paymentStatusRepository->find(PaymentStatus::FAILED);
+            }
+        } else {
+            $paymentStatus = $this->paymentStatusRepository->find(PaymentStatus::FAILED);
+        }
+
+        // 支払いステータスを変更
+        $itemHolder->setPaypayPaymentStatus($paymentStatus);
 
         // 受注ステータスを購入処理中へ変更
         $OrderStatus = $this->orderStatusRepository->find(OrderStatus::PROCESSING);

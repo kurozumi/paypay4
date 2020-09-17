@@ -23,10 +23,8 @@ use Eccube\Service\MailService;
 use Eccube\Service\OrderHelper;
 use Eccube\Service\PurchaseFlow\PurchaseContext;
 use PayPay\OpenPaymentAPI\Client;
-use Plugin\paypay4\Entity\PaymentStatus;
 use Plugin\paypay4\Repository\PaymentStatusRepository;
 use Symfony\Component\HttpFoundation\Request;
-use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 use Symfony\Component\Routing\Annotation\Route;
 
@@ -87,7 +85,9 @@ class PaymentController extends AbstractShoppingController
 
     /**
      * @param Request $request
-     * @return Response
+     * @param $order_no
+     * @return \Symfony\Component\HttpFoundation\RedirectResponse
+     * @throws \Eccube\Service\PurchaseFlow\PurchaseException
      *
      * @Route("/complete/{order_no}", name="paypay_checkout", methods={"GET"})
      */
@@ -112,16 +112,11 @@ class PaymentController extends AbstractShoppingController
             log_error("[PayPay][注文処理]決済エラー");
             $this->addError("決済エラー");
 
-            return $this->rollbackOrder($Order, PaymentStatus::FAILED);
+            return $this->rollbackOrder($Order);
         }
 
         switch ($response["data"]["status"]) {
             case "COMPLETED":
-                // PayPayの受注IDを登録
-                $Order->setPaypayOrderId($response["data"]["paymentId"]);
-                // PayPayの入金日時を登録
-                $Order->setPaymentDate(new \DateTime("@".$response["data"]["acceptedAt"]));
-
                 // purchaseFlow::commitを呼び出し、購入処理をさせる
                 $this->purchaseFlow->commit($Order, new PurchaseContext());
 
@@ -139,10 +134,10 @@ class PaymentController extends AbstractShoppingController
                 log_info('[PayPay][注文処理] 注文処理が完了しました. 購入完了画面へ遷移します.', [$Order->getId()]);
                 break;
             case "EXPIRED":
-                return $this->rollbackOrder($Order, PaymentStatus::EXPIRED);
+                return $this->rollbackOrder($Order);
                 break;
             default:
-                return $this->rollbackOrder($Order, PaymentStatus::FAILED);
+                return $this->rollbackOrder($Order);
         }
 
         return $this->redirectToRoute("shopping_complete");
@@ -150,15 +145,10 @@ class PaymentController extends AbstractShoppingController
 
     /**
      * @param Order $Order
-     * @param $paymentStatusId
      * @return \Symfony\Component\HttpFoundation\RedirectResponse
      */
-    protected function rollbackOrder(Order $Order, $paymentStatusId)
+    protected function rollbackOrder(Order $Order)
     {
-        // 支払いステータスを変更
-        $paymentStatus = $this->paymentStatusRepository->find($paymentStatusId);
-        $Order->setPaypayPaymentStatus($paymentStatus);
-
         $this->purchaseFlow->rollback($Order, new PurchaseContext());
 
         $this->entityManager->flush();
