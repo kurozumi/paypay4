@@ -14,10 +14,8 @@ namespace Plugin\paypay4\Controller;
 
 
 use Eccube\Controller\AbstractShoppingController;
-use Eccube\Entity\BaseInfo;
 use Eccube\Entity\Master\OrderStatus;
 use Eccube\Entity\Order;
-use Eccube\Repository\BaseInfoRepository;
 use Eccube\Repository\Master\OrderStatusRepository;
 use Eccube\Repository\OrderRepository;
 use Eccube\Service\CartService;
@@ -27,7 +25,6 @@ use Eccube\Service\PurchaseFlow\PurchaseContext;
 use PayPay\OpenPaymentAPI\Client;
 use Plugin\paypay4\Entity\PaymentStatus;
 use Plugin\paypay4\Repository\PaymentStatusRepository;
-use Symfony\Component\HttpFoundation\ParameterBag;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
@@ -45,11 +42,6 @@ class PaymentController extends AbstractShoppingController
      * @var Client
      */
     private $client;
-
-    /**
-     * @var ParameterBag
-     */
-    private $parameterBag;
 
     /**
      * @var OrderStatusRepository
@@ -78,7 +70,6 @@ class PaymentController extends AbstractShoppingController
 
     public function __construct(
         Client $client,
-        ParameterBag $parameterBag,
         OrderStatusRepository $orderStatusRepository,
         PaymentStatusRepository $paymentStatusRepository,
         OrderRepository $orderRepository,
@@ -87,7 +78,6 @@ class PaymentController extends AbstractShoppingController
     )
     {
         $this->client = $client;
-        $this->parameterBag = $parameterBag;
         $this->orderStatusRepository = $orderStatusRepository;
         $this->paymentStatusRepository = $paymentStatusRepository;
         $this->orderRepository = $orderRepository;
@@ -127,14 +117,6 @@ class PaymentController extends AbstractShoppingController
 
         switch ($response["data"]["status"]) {
             case "COMPLETED":
-                // 受注ステータスを新規受付へ変更
-                $orderStatus = $this->orderStatusRepository->find(OrderStatus::NEW);
-                $Order->setOrderStatus($orderStatus);
-
-                // 支払いステータスを実売上へ変更
-                $paymentStatus = $this->paymentStatusRepository->find(PaymentStatus::COMPLETED);
-                $Order->setPaypayPaymentStatus($paymentStatus);
-
                 // PayPayの受注IDを登録
                 $Order->setPaypayOrderId($response["data"]["paymentId"]);
 
@@ -148,7 +130,6 @@ class PaymentController extends AbstractShoppingController
                 $this->session->set(OrderHelper::SESSION_ORDER_ID, $Order->getId());
 
                 // メール送信
-                $Order->appendCompleteMailMessage();
                 log_info('[PayPay][注文処理] 注文メールの送信を行います.', [$Order->getId()]);
                 $this->mailService->sendOrderMail($Order);
                 $this->entityManager->flush();
@@ -167,14 +148,11 @@ class PaymentController extends AbstractShoppingController
 
     /**
      * @param Order $Order
+     * @param $paymentStatusId
      * @return \Symfony\Component\HttpFoundation\RedirectResponse
      */
-    private function rollbackOrder(Order $Order, $paymentStatusId)
+    protected function rollbackOrder(Order $Order, $paymentStatusId)
     {
-        // 受注ステータスを購入処理中へ変更
-        $OrderStatus = $this->orderStatusRepository->find(OrderStatus::PROCESSING);
-        $Order->setOrderStatus($OrderStatus);
-
         // 支払いステータスを変更
         $paymentStatus = $this->paymentStatusRepository->find($paymentStatusId);
         $Order->setPaypayPaymentStatus($paymentStatus);
