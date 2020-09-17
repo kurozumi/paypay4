@@ -119,6 +119,8 @@ class PaymentController extends AbstractShoppingController
             case "COMPLETED":
                 // PayPayの受注IDを登録
                 $Order->setPaypayOrderId($response["data"]["paymentId"]);
+                // PayPayの入金日時を登録
+                $Order->setPaymentDate(new \DateTime("@".$response["data"]["acceptedAt"]));
 
                 // purchaseFlow::commitを呼び出し、購入処理をさせる
                 $this->purchaseFlow->commit($Order, new PurchaseContext());

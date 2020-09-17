@@ -58,7 +58,6 @@ class OrderUpdateProcessor extends AbstractPurchaseProcessor
         // 支払いステータスを実売上に変更
         $PaymentStatus = $this->paymentStatusRepository->find(PaymentStatus::COMPLETED);
         $target->setPaypayPaymentStatus($PaymentStatus);
-        $target->setPaymentDate(new \DateTime());
     }
 
     public function rollback(ItemHolderInterface $itemHolder, PurchaseContext $context)
