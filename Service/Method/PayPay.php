@@ -13,15 +13,29 @@
 namespace Plugin\paypay4\Service\Method;
 
 
+use Eccube\Common\EccubeConfig;
+use Eccube\Entity\BaseInfo;
+use Eccube\Entity\Master\OrderStatus;
 use Eccube\Entity\Order;
+use Eccube\Exception\ShoppingException;
+use Eccube\Repository\BaseInfoRepository;
+use Eccube\Repository\Master\OrderStatusRepository;
 use Eccube\Service\Payment\PaymentDispatcher;
 use Eccube\Service\Payment\PaymentMethod;
 use Eccube\Service\Payment\PaymentMethodInterface;
 use Eccube\Service\Payment\PaymentResult;
 use Eccube\Service\PurchaseFlow\PurchaseContext;
 use Eccube\Service\PurchaseFlow\PurchaseFlow;
+use PayPay\OpenPaymentAPI\Client;
+use PayPay\OpenPaymentAPI\Models\CreateQrCodePayload;
+use PayPay\OpenPaymentAPI\Models\OrderItem;
+use Plugin\paypay4\Entity\PaymentStatus;
+use Plugin\paypay4\Repository\PaymentStatusRepository;
 use Symfony\Component\Form\FormInterface;
 use Symfony\Component\HttpFoundation\ParameterBag;
+use Symfony\Component\HttpFoundation\RedirectResponse;
+use Symfony\Component\Routing\Generator\UrlGeneratorInterface;
+use Symfony\Component\Routing\RouterInterface;
 
 class PayPay implements PaymentMethodInterface
 {
@@ -36,6 +50,11 @@ class PayPay implements PaymentMethodInterface
     protected $form;
 
     /**
+     * @var BaseInfo
+     */
+    private $baseInfo;
+
+    /**
      * @var PurchaseFlow
      */
     private $purchaseFlow;
@@ -45,12 +64,49 @@ class PayPay implements PaymentMethodInterface
      */
     private $parameterBag;
 
+    /**
+     * @var OrderStatusRepository
+     */
+    private $orderStatusRepository;
+
+    /**
+     * @var PaymentStatusRepository
+     */
+    private $paymentStatusRepository;
+
+    /**
+     * @var EccubeConfig
+     */
+    private $eccubeConfig;
+
+    /**
+     * @var Client
+     */
+    private $client;
+
+    /**
+     * @var RouterInterface
+     */
+    private $router;
+
     public function __construct(
+        BaseInfoRepository $baseInfoRepository,
         PurchaseFlow $shoppingPurchaseFlow,
-        ParameterBag $parameterBag
+        ParameterBag $parameterBag,
+        OrderStatusRepository $orderStatusRepository,
+        PaymentStatusRepository $paymentStatusRepository,
+        EccubeConfig $eccubeConfig,
+        Client $client,
+        RouterInterface $router
     ) {
+        $this->baseInfo = $baseInfoRepository->get();
         $this->purchaseFlow = $shoppingPurchaseFlow;
         $this->parameterBag = $parameterBag;
+        $this->orderStatusRepository = $orderStatusRepository;
+        $this->paymentStatusRepository = $paymentStatusRepository;
+        $this->eccubeConfig = $eccubeConfig;
+        $this->client = $client;
+        $this->router = $router;
     }
 
     /**
@@ -90,13 +146,63 @@ class PayPay implements PaymentMethodInterface
     {
         // TODO: Implement apply() method.
 
-        $this->purchaseFlow->prepare($this->Order, new PurchaseContext());
+        $Order = $this->Order;
 
-        $this->parameterBag->set('PayPay.Order', $this->Order);
+        // 受注ステータスを決済処理中へ変更
+        $OrderStatus = $this->orderStatusRepository->find(OrderStatus::PENDING);
+        $Order->setOrderStatus($OrderStatus);
 
+        // 支払いステータスをQRコード生成にする
+        $PaymentStatus = $this->paymentStatusRepository->find(PaymentStatus::CREATED);
+        $Order->setPaypayPaymentStatus($PaymentStatus);
+
+        // 決済ステータスをQRコード生成へ変更
+        $payload = new CreateQrCodePayload();
+        $payload
+            ->setMerchantPaymentId($Order->getOrderNo())
+            ->setRequestedAt()
+            ->setCodeType()
+            ->setRedirectType('WEB_LINK')
+            ->setRedirectUrl($this->router->generate('paypay_checkout', ["order_no" => $Order->getOrderNo()], UrlGeneratorInterface::ABSOLUTE_URL))
+            ->setOrderDescription($this->baseInfo->getShopName());
+
+//        仮売上(残高ブロック)にする
+//        $payload->setIsAuthorization(true);
+
+        $orderItems = [];
+        foreach ($Order->getOrderItems() as $orderItem) {
+            if ($orderItem->isProduct()) {
+                $orderItems[] = (new OrderItem())
+                    ->setName($orderItem->getProductName())
+                    ->setQuantity(intval($orderItem->getQuantity()))
+                    ->setUnitPrice(['amount' => intval($orderItem->getPriceIncTax()), 'currency' => $this->eccubeConfig['currency']]);
+            }
+        }
+        $payload->setOrderItems($orderItems);
+
+        $payload->setAmount([
+            'amount' => intval($Order->getPaymentTotal()),
+            'currency' => $this->eccubeConfig['currency']
+        ]);
+
+        // QRコード生成
+        $response = $this->client->code->createQRCode($payload);
+
+        if ($response['resultInfo']["code"] !== "SUCCESS") {
+            $error_message = sprintf("PayPay: %s", $response["resultInfo"]["message"]);
+            throw new ShoppingException($error_message);
+        }
+
+        // QRコードID保存
+        $Order->setPaypayCodeId($response["data"]["codeId"]);
+        $url = $response['data']['url'];
+
+        $this->purchaseFlow->prepare($Order, new PurchaseContext());
+
+        // PayPay決済ページへリダイレクト
+        $response = new RedirectResponse($url);
         $dispatcher = new PaymentDispatcher();
-        $dispatcher->setRoute('paypay_payment');
-        $dispatcher->setForward(true);
+        $dispatcher->setResponse($response);
 
         return $dispatcher;
     }

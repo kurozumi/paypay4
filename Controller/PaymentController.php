@@ -25,8 +25,6 @@ use Eccube\Service\MailService;
 use Eccube\Service\OrderHelper;
 use Eccube\Service\PurchaseFlow\PurchaseContext;
 use PayPay\OpenPaymentAPI\Client;
-use PayPay\OpenPaymentAPI\Models\CreateQrCodePayload;
-use PayPay\OpenPaymentAPI\Models\OrderItem;
 use Plugin\paypay4\Entity\PaymentStatus;
 use Plugin\paypay4\Repository\PaymentStatusRepository;
 use Symfony\Component\HttpFoundation\ParameterBag;
@@ -34,7 +32,6 @@ use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 use Symfony\Component\Routing\Annotation\Route;
-use Symfony\Component\Routing\Generator\UrlGeneratorInterface;
 
 /**
  * Class PaymentController
@@ -44,11 +41,6 @@ use Symfony\Component\Routing\Generator\UrlGeneratorInterface;
  */
 class PaymentController extends AbstractShoppingController
 {
-    /**
-     * @var BaseInfo
-     */
-    private $baseInfo;
-
     /**
      * @var Client
      */
@@ -85,7 +77,6 @@ class PaymentController extends AbstractShoppingController
     private $mailService;
 
     public function __construct(
-        BaseInfoRepository $baseInfoRepository,
         Client $client,
         ParameterBag $parameterBag,
         OrderStatusRepository $orderStatusRepository,
@@ -95,8 +86,6 @@ class PaymentController extends AbstractShoppingController
         MailService $mailService
     )
     {
-        $this->baseInfo = $baseInfoRepository->get();
-
         $this->client = $client;
         $this->parameterBag = $parameterBag;
         $this->orderStatusRepository = $orderStatusRepository;
@@ -108,87 +97,19 @@ class PaymentController extends AbstractShoppingController
 
     /**
      * @param Request $request
-     * @return \Symfony\Component\HttpFoundation\RedirectResponse|Response
-     * @throws \Exception
-     *
-     * @Route("/payment", name="paypay_payment")
-     */
-    public function payment(Request $request)
-    {
-        /** @var Order $Order */
-        $Order = $this->parameterBag->get('PayPay.Order');
-
-        if (!$Order) {
-            return $this->redirectToRoute('shopping_error');
-        }
-
-        $payload = new CreateQrCodePayload();
-        $payload
-            ->setMerchantPaymentId($Order->getOrderNo())
-            ->setRequestedAt()
-            ->setCodeType()
-            ->setRedirectType('WEB_LINK')
-            ->setRedirectUrl($this->generateUrl('paypay_checkout', ["order_no" => $Order->getOrderNo()], UrlGeneratorInterface::ABSOLUTE_URL))
-            ->setOrderDescription($this->baseInfo->getShopName());
-
-//            仮売上(残高ブロック)にする
-//            $payload->setIsAuthorization(true);
-
-        $orderItems = [];
-        foreach ($Order->getOrderItems() as $orderItem) {
-            if ($orderItem->isProduct()) {
-                $orderItems[] = (new OrderItem())
-                    ->setName($orderItem->getProductName())
-                    ->setQuantity(intval($orderItem->getQuantity()))
-                    ->setUnitPrice(['amount' => intval($orderItem->getPriceIncTax()), 'currency' => $this->eccubeConfig['currency']]);
-            }
-        }
-        $payload->setOrderItems($orderItems);
-
-        $payload->setAmount([
-            'amount' => intval($Order->getPaymentTotal()),
-            'currency' => $this->eccubeConfig['currency']
-        ]);
-
-        $response = $this->client->code->createQRCode($payload);
-
-        if ($response['resultInfo']["code"] === "SUCCESS") {
-            // QRコードID保存
-            $Order->setPaypayCodeId($response["data"]["codeId"]);
-
-            // 支払いステータスをQRコード生成にする
-            $PaymentStatus = $this->paymentStatusRepository->find(PaymentStatus::CREATED);
-            $Order->setPaypayPaymentStatus($PaymentStatus);
-
-            $this->entityManager->persist($Order);
-
-            $this->entityManager->flush();
-
-            return $this->redirect($response['data']['url']);
-        } else {
-            $error_message = sprintf("PayPay: %s", $response["resultInfo"]["message"]);
-            log_error($error_message);
-            $this->addError($error_message);
-
-            $this->rollbackOrder($Order, PaymentStatus::FAILED);
-
-            return $this->redirectToRoute("shopping_error");
-        }
-
-    }
-
-    /**
-     * @param Request $request
      * @return Response
      *
-     * @Route("/checkout/{order_no}", name="paypay_checkout", methods={"GET"})
+     * @Route("/complete/{order_no}", name="paypay_checkout", methods={"GET"})
      */
-    public function checkout(Request $request, $order_no)
+    public function complete(Request $request, $order_no)
     {
+        $OrderStatus = $this->orderStatusRepository->find(OrderStatus::PENDING);
+
         /** @var Order $Order */
         $Order = $this->orderRepository->findOneBy([
             'order_no' => $order_no,
-            'Customer' => $this->getUser()
+            'Customer' => $this->getUser(),
+            'OrderStatus' => $OrderStatus
         ]);
 
         if (!$Order) {
@@ -227,6 +148,7 @@ class PaymentController extends AbstractShoppingController
                 $this->session->set(OrderHelper::SESSION_ORDER_ID, $Order->getId());
 
                 // メール送信
+                $Order->appendCompleteMailMessage();
                 log_info('[PayPay][注文処理] 注文メールの送信を行います.', [$Order->getId()]);
                 $this->mailService->sendOrderMail($Order);
                 $this->entityManager->flush();
