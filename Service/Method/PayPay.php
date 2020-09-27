@@ -148,14 +148,6 @@ class PayPay implements PaymentMethodInterface
 
         $Order = $this->Order;
 
-        // 受注ステータスを決済処理中へ変更
-        $OrderStatus = $this->orderStatusRepository->find(OrderStatus::PENDING);
-        $Order->setOrderStatus($OrderStatus);
-
-        // 支払いステータスをQRコード生成にする
-        $PaymentStatus = $this->paymentStatusRepository->find(PaymentStatus::CREATED);
-        $Order->setPaypayPaymentStatus($PaymentStatus);
-
         // 決済ステータスをQRコード生成へ変更
         $payload = new CreateQrCodePayload();
         $payload
