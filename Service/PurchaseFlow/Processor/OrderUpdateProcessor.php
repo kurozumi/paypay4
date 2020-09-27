@@ -70,6 +70,12 @@ class OrderUpdateProcessor extends AbstractPurchaseProcessor
         ]);
     }
 
+    /**
+     * 決済の前処理
+     *
+     * @param ItemHolderInterface $target
+     * @param PurchaseContext $context
+     */
     public function prepare(ItemHolderInterface $target, PurchaseContext $context): void
     {
         if (!$target instanceof Order) {
